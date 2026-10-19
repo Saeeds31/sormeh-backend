@@ -25,6 +25,7 @@ class Product extends Model
         'description',
         'main_image',
         'is_rechargeable',
+        'is_trend',
         'meta_title',
         'meta_description',
         'status',

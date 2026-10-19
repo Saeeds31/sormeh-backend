@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Modules\Products\Http\Controllers\CustomerProductPhotoController;
 use Modules\Products\Http\Controllers\ProductsController;
 use Modules\Products\Http\Controllers\ProductVariantController;
 
@@ -22,3 +23,17 @@ Route::prefix('v1/front')->group(function () {
     Route::get('/products/{id}', [ProductsController::class, 'frontDetail'])->name('front-product-index');
     Route::get('/products/{id}/similar', [ProductsController::class, 'similar'])->name('front-similar-product-index');
 });
+Route::prefix('v1/front/products/{productId}/customer-photos')->group(function () {
+    Route::get('check-upload', [CustomerProductPhotoController::class, 'checkUpload']);
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/', [CustomerProductPhotoController::class, 'store']);
+    });
+});
+
+Route::prefix('v1/admin/customer-photos')
+    ->middleware(['auth:sanctum'])
+    ->group(function () {
+        Route::get('/', [CustomerProductPhotoController::class, 'adminIndex']);
+        Route::patch('{id}/moderate', [CustomerProductPhotoController::class, 'moderate']);
+        Route::delete('{id}', [CustomerProductPhotoController::class, 'destroy']);
+    });

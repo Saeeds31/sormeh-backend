@@ -151,6 +151,15 @@ class FrontController extends Controller
             CacheService::TTL_ONE_DAY,
             fn() => Product::where('is_rechargeable', true)->take(15)->get()
         );
+
+        $data['is_trends'] = CacheService::rememberWithTags(
+            [CacheService::TAG_PRODUCTS],
+            'home_trends',
+            CacheService::TTL_ONE_DAY,
+            fn() => Product::where('is_trend', true)->take(15)->get()
+        );
+
+
         $data['banners'] =
             CacheService::remember(
                 CacheService::HOME_BANNER,

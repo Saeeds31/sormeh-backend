@@ -25,6 +25,7 @@ class ProductStoreRequest extends FormRequest
             'published_at'              => ['nullable', 'date'],
             'discount_end_at'              => ['nullable', 'date'],
             'is_rechargeable'       => ['nullable', 'boolean'],
+            'is_trend'       => ['nullable', 'boolean'],
             'barcode'          => ['nullable', 'string', 'max:100'],
             'sku'              => ['nullable', 'string', 'max:100'],
             'stock'            => ['nullable', 'integer', 'min:0'],
