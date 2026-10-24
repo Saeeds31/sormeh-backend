@@ -163,7 +163,7 @@ class FrontController extends Controller
                 [CacheService::TAG_PRODUCTS],
                 'home_top_discounted_products',
                 CacheService::TTL_ONE_WEEK,
-                Product::topDiscounted()
+                fn() =>  Product::topDiscounted()
             );
 
         $data['banners'] =
