@@ -5,6 +5,8 @@ namespace Modules\Categories\Models;
 use App\Support\CacheService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Modules\Products\Models\Product;
+
 // use Modules\Categories\Database\Factories\CategoryFactory;
 
 class Category extends Model
@@ -18,7 +20,7 @@ class Category extends Model
     // رابطه با محصولات
     public function products()
     {
-        return $this->belongsToMany(\Modules\Products\Models\Product::class, 'category_product', 'category_id', 'product_id');
+        return $this->belongsToMany(Product::class, 'category_product', 'category_id', 'product_id');
     }
 
     // دسته‌بندی والد
@@ -35,6 +37,21 @@ class Category extends Model
     public function allChildren()
     {
         return $this->children()->with('allChildren');
+    }
+    public function descendantIds(): array
+    {
+        $ids = [$this->id];
+        foreach ($this->allChildren as $child) {
+            $ids = array_merge($ids, $child->descendantIds());
+        }
+        return $ids;
+    }
+
+    public function productsWithDescendants()
+    {
+        $ids = $this->descendantIds();
+
+        return Product::whereHas('categories', fn($q) => $q->whereIn('categories.id', $ids));
     }
     protected static function booted()
     {

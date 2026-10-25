@@ -124,10 +124,12 @@ class FrontController extends Controller
             CacheService::TTL_ONE_DAY,
             function () {
                 $list = [];
-                $categories = Category::where('show_products_in_home', 1)->get();
+                $categories = Category::where('show_products_in_home', 1)
+                    ->with('allChildren.allChildren.allChildren')
+                    ->get();
 
                 foreach ($categories as $category) {
-                    $products = $category->products()
+                    $products = $category->productsWithDescendants()
                         ->where('status', 'published')
                         ->whereIn('sales_channel', ['online_only', 'both'])
                         ->orderBy('created_at', 'desc')

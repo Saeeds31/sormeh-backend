@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Support\CacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Modules\Categories\Models\Category;
 use Modules\Notifications\Services\NotificationService;
 use Modules\Orders\Models\Order;
 use Modules\Orders\Models\OrderItem;
@@ -427,11 +428,22 @@ class ProductsController extends Controller
 
         if ($request->filled('category_ids')) {
             $categoryIds = explode(',', $request->category_ids);
-            $query->whereHas('categories', function ($q) use ($categoryIds) {
-                $q->whereIn('categories.id', $categoryIds);
+
+            // گسترش هر دسته به خودش + همه زیردسته‌ها
+            $expandedIds = collect($categoryIds)
+                ->filter()
+                ->flatMap(function ($id) {
+                    $category = Category::find((int) $id);
+                    return $category ? $category->descendantIds() : [];
+                })
+                ->unique()
+                ->values()
+                ->toArray();
+
+            $query->whereHas('categories', function ($q) use ($expandedIds) {
+                $q->whereIn('categories.id', $expandedIds);
             });
         }
-
         if ($request->filled('attribute_values')) {
             $valueIds = explode(',', $request->query('attribute_values'));
             $query->whereHas('variants.values', function ($q2) use ($valueIds) {
