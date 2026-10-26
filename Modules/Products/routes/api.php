@@ -20,8 +20,8 @@ Route::middleware(['auth:sanctum'])->prefix('v1/admin')->group(function () {
 Route::prefix('v1/front')->group(function () {
     Route::get('/products/search', [ProductsController::class, 'search'])->name('search');
     Route::get('/products', [ProductsController::class, 'frontIndex'])->name('front-index');
-    Route::get('/products/{id}', [ProductsController::class, 'frontDetail'])->name('front-product-index');
-    Route::get('/products/{id}/similar', [ProductsController::class, 'similar'])->name('front-similar-product-index');
+    Route::get('/products/{idOrSlug}', [ProductsController::class, 'frontDetail'])->name('front-product-index');
+    Route::get('/products/{idOrSlug}/similar', [ProductsController::class, 'similar'])->name('front-similar-product-index');
 });
 Route::prefix('v1/front/products/{productId}/customer-photos')->group(function () {
     Route::get('check-upload', [CustomerProductPhotoController::class, 'checkUpload']);

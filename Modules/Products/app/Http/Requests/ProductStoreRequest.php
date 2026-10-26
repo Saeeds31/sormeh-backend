@@ -28,6 +28,13 @@ class ProductStoreRequest extends FormRequest
             'is_trend'       => ['nullable', 'boolean'],
             'barcode'          => ['nullable', 'string', 'max:100'],
             'sku'              => ['nullable', 'string', 'max:100'],
+            'slug' => [
+                'nullable',
+                'string',
+                'min:3',
+                'max:255',
+                'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/'
+            ],
             'stock'            => ['nullable', 'integer', 'min:0'],
             'price'            => ['required', 'integer', 'min:0'],
             'video'            => ['nullable', 'file', 'max:4096'],

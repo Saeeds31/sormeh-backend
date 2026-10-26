@@ -3,6 +3,7 @@
 namespace Modules\Products\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ProductUpdateRequest extends FormRequest
 {
@@ -11,6 +12,9 @@ class ProductUpdateRequest extends FormRequest
      */
     public function rules(): array
     {
+
+        $product = $this->route('product');
+        $productId = $product?->id;
         return [
             'title'            => ['nullable', 'string', 'max:255'],
             'description'      => ['nullable', 'string'],
@@ -30,6 +34,14 @@ class ProductUpdateRequest extends FormRequest
             'is_trend'       => ['nullable', 'boolean'],
             'stock'            => ['nullable', 'integer', 'min:0'],
             'price'            => ['nullable', 'integer', 'min:0'],
+            'slug' => [
+                'nullable',
+                'string',
+                'min:3',
+                'max:255',
+                'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',
+                Rule::unique('products', 'slug')->ignore($productId),
+            ],
             'video'            => ['nullable', 'file', 'max:4096'],
             'categories' => ['required', 'array'],
             'categories.*' => ['exists:categories,id'],

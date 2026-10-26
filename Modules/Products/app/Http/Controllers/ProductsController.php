@@ -496,20 +496,20 @@ class ProductsController extends Controller
 
         return $query;
     }
-    public function frontDetail(Request $request, $id)
+    public function frontDetail(Request $request, $idOrSlug)
     {
         $user = $request->user();
 
         $cached = CacheService::remember(
-            "product_detail_{$id}",
+            "product_detail_{$idOrSlug}",
             CacheService::TTL_ONE_DAY,
-            fn() => $this->buildProductDetailPayload($id)
+            fn() => $this->buildProductDetailPayload($idOrSlug)
         );
 
         $isInWishList = false;
         if ($user) {
             $isInWishList = Wishlist::where('user_id', $user->id)
-                ->where('product_id', $id)
+                ->where('product_id', $cached->prodduct->id)
                 ->exists();
         }
 
@@ -523,18 +523,37 @@ class ProductsController extends Controller
     /**
      * ساخت payload کش‌پذیر جزئیات محصول
      */
-    private function buildProductDetailPayload($id): array
+    private function buildProductDetailPayload($idOrSlug): array
     {
         $product = Product::with([
             'categories:id,title',
             'images:id,product_id,path',
             'variants.values.attribute',
             'specifications.values',
-            'comments'
+            'comments',
         ])
             ->withCount('variants')
             ->whereIn('sales_channel', ['online_only', 'both'])
-            ->findOrFail($id);
+            ->where('slug', $idOrSlug)
+            ->first();
+
+        if (!$product && ctype_digit($idOrSlug)) {
+            $product = Product::with([
+                'categories:id,title',
+                'images:id,product_id,path',
+                'variants.values.attribute',
+                'specifications.values',
+                'comments',
+            ])
+                ->withCount('variants')
+                ->whereIn('sales_channel', ['online_only', 'both'])
+                ->whereKey((int) $idOrSlug)
+                ->first();
+        }
+
+        if (!$product) {
+            abort(404);
+        }
 
         // فقط واریانت‌هایی که wp_added=false هستن
         $variants = $product->variants->filter(function ($variant) {
@@ -669,10 +688,21 @@ class ProductsController extends Controller
             })->values(),
         ];
     }
-    public function similar($id)
+    public function similar($idOrSlug)
     {
-        $product = Product::with('categories:id')->findOrFail($id);
-        // گرفتن ID دسته‌ها
+        $product = Product::with('categories:id')
+            ->where('slug', $idOrSlug)
+            ->first();
+
+        if (!$product && ctype_digit($idOrSlug)) {
+            $product = Product::with('categories:id')
+                ->whereKey((int) $idOrSlug)
+                ->first();
+        }
+
+        if (!$product) {
+            abort(404);
+        }        // گرفتن ID دسته‌ها
         $categoryIds = $product->categories->pluck('id');
         // پیدا کردن محصولات مشابه
         $similar = Product::where('status', 'published')
