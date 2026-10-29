@@ -62,7 +62,7 @@ class FrontController extends Controller
             [CacheService::TAG_CATEGORIES],
             CacheService::BASE_CATEGORIES,
             CacheService::TTL_ONE_MONTH,
-            fn() => Category::with('children')
+            fn() => Category::with('allChildren')
                 ->whereNull('parent_id')
                 ->get()
         );
