@@ -31,6 +31,7 @@ class UsersController extends Controller
             'full_name'     => 'nullable|string|max:255',
             'password'      => 'nullable|string|min:6',
             'national_code' => 'nullable|string|max:10|unique:users,national_code,' . $user->id,
+            'avatar' => "nullable|file|max:1024",
             'birth_date'    => 'nullable|date',
         ]);
 
@@ -40,7 +41,10 @@ class UsersController extends Controller
         } else {
             unset($validated['password']); // اگر نبود، حذفش کنیم تا مقدار قبلی تغییر نکنه
         }
-
+        if ($request->hasFile('avatar')) {
+            $path = $request->file('avatar')->store('users', 'public');
+            $validated['avatar'] = $path;
+        }
         // بروزرسانی کاربر
         $user->update($validated);
 
@@ -101,6 +105,10 @@ class UsersController extends Controller
     public function store(UserStoreRequest $request)
     {
         $data = $request->validated();
+        if ($request->hasFile('avatar')) {
+            $path = $request->file('avatar')->store('users', 'public');
+            $data['avatar'] = $path;
+        }
         $customerRoleId = Role::where('slug', 'customer')->value('id');
         if (!$customerRoleId) {
             return response()->json([
@@ -134,6 +142,10 @@ class UsersController extends Controller
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
+        }
+          if ($request->hasFile('avatar')) {
+            $path = $request->file('avatar')->store('users', 'public');
+            $data['avatar'] = $path;
         }
         $user->update($data);
         return response()->json($user->load(['roles', 'addresses', 'wallet']));

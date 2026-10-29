@@ -16,6 +16,7 @@ class UserStoreRequest extends FormRequest
             'mobile'        => ['required', 'string', 'size:11', 'unique:users,mobile'],
             'password'      => ['required', 'string', 'min:6'],
             'national_code' => ['nullable', 'string', 'size:10'],
+            'avatar' => ['nullable', 'file',  'max:1024'],
             'birth_date'    => ['nullable', 'date'],
         ];
     }
