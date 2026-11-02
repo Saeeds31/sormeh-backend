@@ -143,7 +143,7 @@ class UsersController extends Controller
         } else {
             unset($data['password']);
         }
-          if ($request->hasFile('avatar')) {
+        if ($request->hasFile('avatar')) {
             $path = $request->file('avatar')->store('users', 'public');
             $data['avatar'] = $path;
         }

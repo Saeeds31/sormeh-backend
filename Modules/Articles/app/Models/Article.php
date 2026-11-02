@@ -47,7 +47,7 @@ class Article extends Model
     }
     public static function latestArticles($limit = 8)
     {
-        return self::withCount('comments')->orderBy('created_at', 'desc')
+        return self::withCount('comments')->with(['categories','author'])->orderBy('created_at', 'desc')
             ->take($limit)
             ->get();
     }
