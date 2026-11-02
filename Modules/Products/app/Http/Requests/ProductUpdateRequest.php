@@ -27,6 +27,7 @@ class ProductUpdateRequest extends FormRequest
             'discount_type' => ['nullable', 'in:percent,fixed', 'required_with:discount_value'],
             'discount_start_at'              => ['nullable', 'date'],
             'discount_end_at'              => ['nullable', 'date'],
+            'low_stock_threshold' => ['nullable', 'integer', 'min:0'],
             'published_at'              => ['nullable', 'date'],
             'barcode'          => ['nullable', 'string', 'max:100'],
             'sku'              => ['nullable', 'string', 'max:100'],

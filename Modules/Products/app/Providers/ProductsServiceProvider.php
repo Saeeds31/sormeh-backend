@@ -9,6 +9,7 @@ use Nwidart\Modules\Traits\PathNamespace;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use Illuminate\Console\Scheduling\Schedule;
+use Modules\Products\Console\Commands\SendLowStockNotifications;
 
 class ProductsServiceProvider extends ServiceProvider
 {
@@ -47,6 +48,8 @@ class ProductsServiceProvider extends ServiceProvider
     {
         $this->commands([
             PublishScheduledProducts::class,
+            SendLowStockNotifications::class
+
         ]);
     }
 
@@ -58,6 +61,12 @@ class ProductsServiceProvider extends ServiceProvider
         $this->app->booted(function () {
             $schedule = $this->app->make(Schedule::class);
             $schedule->command('products:publish-scheduled')->everyFiveMinutes()->runInBackground();
+            $schedule->command('products:send-low-stock-notifications')
+                ->dailyAt('03:00')
+                ->timezone('Asia/Tehran')
+                ->withoutOverlapping()
+                ->onOneServer()
+                ->runInBackground();
         });
     }
 

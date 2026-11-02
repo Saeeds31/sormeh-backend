@@ -24,6 +24,7 @@ class ProductStoreRequest extends FormRequest
             'discount_start_at'              => ['nullable', 'date'],
             'published_at'              => ['nullable', 'date'],
             'discount_end_at'              => ['nullable', 'date'],
+            'low_stock_threshold' => ['nullable', 'integer', 'min:0'],
             'is_rechargeable'       => ['nullable', 'boolean'],
             'is_trend'       => ['nullable', 'boolean'],
             'barcode'          => ['nullable', 'string', 'max:100'],

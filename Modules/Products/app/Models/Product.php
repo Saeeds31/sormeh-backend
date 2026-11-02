@@ -39,6 +39,7 @@ class Product extends Model
         'sku',
         'stock',
         'price',
+        'low_stock_threshold',
         'slug',
         'video'
     ];

@@ -26,6 +26,8 @@ class ProductVariant extends Model
         'discount_type',
         'discount_start_at',
         'discount_end_at',
+        'low_stock_notified_at'
+
     ];
 
     protected $appends = ['final_price'];
@@ -125,5 +127,36 @@ class ProductVariant extends Model
 
         static::saved($clearCache);
         static::deleted($clearCache);
+    }
+
+    /**
+     * واریانت‌هایی که باید در کران‌جاب هشدار بگیرن:
+     * - محصولش آستانه داره (NULL نیست)
+     * - خودش هنوز هشدار نگرفته (NULL)
+     * - stock <= آستانه‌ی محصول
+     * - محصول منتشرشده باشه
+     */
+    public function scopeLowStockCandidates($query)
+    {
+        return $query
+            ->join('products', 'products.id', '=', 'product_variants.product_id')
+            ->whereNotNull('products.low_stock_threshold')
+            ->whereNull('product_variants.low_stock_notified_at')
+            ->whereColumn('product_variants.stock', '<=', 'products.low_stock_threshold')
+            ->where('products.status', 'published')
+            ->select('product_variants.*', 'products.low_stock_threshold as product_threshold');
+    }
+
+    /**
+     * واریانت‌هایی که قبلاً هشدار گرفتن ولی موجودی‌شون برگشته بالای آستانه
+     * → باید فلگشون NULL بشه که دفعه‌ی بعد دوباره بتونن هشدار بگیرن
+     */
+    public function scopeNeedNotificationReset($query)
+    {
+        return $query
+            ->join('products', 'products.id', '=', 'product_variants.product_id')
+            ->whereNotNull('products.low_stock_threshold')
+            ->whereNotNull('product_variants.low_stock_notified_at')
+            ->whereColumn('product_variants.stock', '>', 'products.low_stock_threshold');
     }
 }

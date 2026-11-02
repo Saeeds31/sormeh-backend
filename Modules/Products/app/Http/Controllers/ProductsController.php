@@ -735,4 +735,70 @@ class ProductsController extends Controller
             ]
         ]);
     }
+    /**
+     * لیست محصولاتی که حداقل یک واریانتشون زیر آستانه‌ی موجودی هست.
+     * فقط صفحه‌بندی‌شده، بدون فیلتر.
+     */
+    public function lowStockList(Request $request)
+    {
+        $perPage = (int) $request->get('per_page', 20);
+
+        // زیرکوئری: شناسه محصولاتی که حداقل یک variant با stock <= low_stock_threshold دارند
+        $products = Product::query()
+            ->whereNotNull('low_stock_threshold')
+            ->whereIn('id', function ($q) {
+                $q->select('product_variants.product_id')
+                    ->from('product_variants')
+                    ->join('products', 'products.id', '=', 'product_variants.product_id')
+                    ->whereColumn('product_variants.stock', '<=', 'products.low_stock_threshold');
+            })
+            ->with([
+                'variants' => function ($q) {
+                    $q->with('values.attribute:id,name');
+                },
+                'categories:id,title',
+                'images:id,product_id,path',
+            ])
+            ->latest()
+            ->paginate($perPage);
+
+        $products->getCollection()->transform(function ($product) {
+            // فیلتر variantهای بحرانی در PHP (دسترسی به low_stock_threshold محصول داریم)
+            $criticalVariants = $product->variants
+                ->filter(fn($v) => $v->stock <= $product->low_stock_threshold)
+                ->map(function ($v) use ($product) {
+                    return [
+                        'id'                 => $v->id,
+                        'sku'                => $v->sku,
+                        'stock'              => $v->stock,
+                        'threshold'          => $product->low_stock_threshold,
+                        'label'              => $v->values->isNotEmpty()
+                            ? $v->values->map(fn($val) => $val->value)->implode(' / ')
+                            : ($v->sku ?: 'تک‌تنوع'),
+                        'notified_at'        => $v->low_stock_notified_at,
+                        'needs_notification' => $v->low_stock_notified_at === null,
+                    ];
+                })
+                ->values();
+
+            return [
+                'id'                  => $product->id,
+                'title'               => $product->title,
+                'sku'                 => $product->sku,
+                'status'              => $product->status,
+                'main_image'          => $product->main_image,
+                'low_stock_threshold' => $product->low_stock_threshold,
+                'categories'          => $product->categories,
+                'critical_variants'   => $criticalVariants,
+                'critical_count'      => $criticalVariants->count(),
+                'min_stock'           => $criticalVariants->min('stock'),
+                'created_at'          => $product->created_at,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data'    => $products,
+        ]);
+    }
 }

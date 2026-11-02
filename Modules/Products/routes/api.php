@@ -16,6 +16,8 @@ Route::middleware(['auth:sanctum'])->prefix('v1/admin')->group(function () {
         Route::put('variants/{variant}', [ProductVariantController::class, 'update']);
         Route::delete('variants/{variant}', [ProductVariantController::class, 'destroy']);
     });
+    Route::get('products-low-stock', [ProductsController::class, 'lowStockList'])
+        ->name('products.low-stock');
 });
 Route::prefix('v1/front')->group(function () {
     Route::get('/products/search', [ProductsController::class, 'search'])->name('search');
