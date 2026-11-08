@@ -6,6 +6,7 @@ use Exception;
 use Modules\Payment\Drivers\ZarinpalDriver;
 use Modules\Payment\Drivers\ZibalDriver;
 use Modules\Payment\Drivers\ParsianDriver;
+use Modules\Payment\Drivers\SnappPayDriver;
 
 class GatewayManager
 {
@@ -18,9 +19,8 @@ class GatewayManager
             'zibal' => app(ZibalDriver::class),
             'zarinpal' => app(ZarinpalDriver::class),
             'parsian' => app(ParsianDriver::class),
-
+            'snapp_pay' => app(SnappPayDriver::class),
             default => throw new Exception('Gateway not found'),
-
         };
     }
 }

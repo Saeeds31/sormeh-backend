@@ -24,7 +24,13 @@ return [
         'terminal_id' => env('SAMAN_TERMINAL_ID', ''),
         'callback_url' => env('SAMAN_CALLBACK_URL', '/api/v1/gateway/callback'),
     ],
-
+    'snapppay' => [
+        'base_url' => env('SNAPPPAY_BASE_URL', 'https://api.snapppay.ir'),
+        'client_id' => env('SNAPPPAY_CLIENT_ID'),
+        'client_secret' => env('SNAPPPAY_CLIENT_SECRET'),
+        'username' => env('SNAPPPAY_USERNAME'),
+        'password' => env('SNAPPPAY_PASSWORD'),
+    ],
     'fake' => [
         'active' => env('FAKE_GATEWAY_ACTIVE', true),
         'auto_approve' => env('FAKE_GATEWAY_AUTO_APPROVE', true),

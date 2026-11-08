@@ -199,7 +199,12 @@ class CallbackController extends Controller
                 return true;
             }
         }
-
+        if ($gateway === 'snapp_pay') {
+            $state = $request->input('state');
+            if ($state && $state !== 'OK') {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -247,6 +252,9 @@ class CallbackController extends Controller
                 break;
             case 'zibal':
                 $authority = $request->input('trackId');
+                break;
+            case 'snapp_pay':
+                $authority = $request->input('paymentToken') ?? $request->input('token') ?? $request->input('Authority');
                 break;
         }
 
