@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Modules\Cart\Models\Cart;
+use Modules\Club\Services\ClubService;
 use Modules\Gateway\Models\GatewayTransaction;
 use Modules\Orders\Models\Order;
 use Modules\Payment\Services\PaymentVerifier;
@@ -21,12 +22,14 @@ class CallbackController extends Controller
         protected PaymentVerifier $paymentVerifier,
         protected PaymentCompletionService $paymentCompletionService,
         protected PaymentFailureService $paymentFailureService,
+        protected ClubService $clubService
     ) {}
 
     public function __invoke(
         Request $request,
         string $gateway
     ) {
+
         $callbackLog = GatewayCallbackLog::create([
             'gateway' => $gateway,
             'method' => $request->method(),
@@ -110,6 +113,8 @@ class CallbackController extends Controller
             );
             if ($result['transaction']->payable instanceof Order) {
                 $order = $result['transaction']->payable;
+                // ===== باشگاه مشتریان: اعطای امتیاز بابت سفارش =====
+                $this->clubService->awardForOrder($order);
                 Cart::where('user_id', $order->user_id)->delete();
             }
             $transaction = $result['transaction'];
@@ -199,10 +204,19 @@ class CallbackController extends Controller
                 return true;
             }
         }
+        // ===== اسنپ =====
+
         if ($gateway === 'snapp_pay') {
             $state = $request->input('state');
             if ($state && $state !== 'OK') {
                 return true;
+            }
+        }
+        // ===== ترب =====
+        if ($gateway === 'torobpay') {
+            $state = $request->input('state');
+            if ($state === 'FAILED') {
+                return true; // یعنی پرداخت ناموفق بوده، بریم سراغ failOrder
             }
         }
         return false;
@@ -241,6 +255,13 @@ class CallbackController extends Controller
      */
     protected function findTransaction(string $gateway, Request $request): ?GatewayTransaction
     {
+        if ($gateway === 'torobpay' && empty($request->all())) {
+            $rawBody = file_get_contents('php://input');
+            if (!empty($rawBody)) {
+                parse_str($rawBody, $parsedBody);
+                $request->merge($parsedBody);
+            }
+        }
         $authority = null;
 
         switch ($gateway) {
@@ -255,6 +276,15 @@ class CallbackController extends Controller
                 break;
             case 'snapp_pay':
                 $authority = $request->input('paymentToken') ?? $request->input('token') ?? $request->input('Authority');
+                break;
+            case 'torobpay':
+                $tid = $request->input('transactionId');
+                if ($tid) {
+                    return GatewayTransaction::query()
+                        ->where('id', (int) $tid)
+                        ->with('payable')
+                        ->first();
+                }
                 break;
         }
 

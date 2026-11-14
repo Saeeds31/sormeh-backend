@@ -14,9 +14,9 @@ Route::middleware(['auth:sanctum'])->prefix('v1/admin')->group(function () {
     Route::get('orders-problematic', [OrdersController::class, 'problematicOrders']);
     Route::post('/orders-bulk-complete', [OrdersController::class, 'bulkComplete'])
         ->name('orders.bulk-complete');
-    Route::put('/orders/{order}/update', [OrdersController::class, 'updateOrder']);
+    // Route::put('/orders/{order}/update', [OrdersController::class, 'updateOrder']);
 
-    Route::post('/orders/{order}/calculate-shipping', [OrdersController::class, 'calculateShippingForEdit']);
+    // Route::post('/orders/{order}/calculate-shipping', [OrdersController::class, 'calculateShippingForEdit']);
     // 
     Route::get('/orders/{order}/addresses', [OrdersController::class, 'getUserAddresses']);
     Route::put('/orders/{order}/change-address', [OrdersController::class, 'changeOrderAddress']);

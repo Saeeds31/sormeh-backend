@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Modules\Addresses\Models\Address;
 use Modules\Cart\Models\Cart;
+use Modules\Club\Services\ClubService;
 use Modules\Coupons\Models\Coupon;
 use Modules\Coupons\Services\CouponService;
 use Modules\Gateway\Models\GatewayTransaction;
@@ -37,6 +38,7 @@ class OrdersController extends Controller
         protected PaymentCompletionService $paymentCompletionService,
         protected NotificationService $notifications,
         protected SmsService $smsService,
+        protected ClubService $clubService,
     ) {}
 
     /**
@@ -395,7 +397,8 @@ class OrdersController extends Controller
                 'gateway_transaction_id' => null,
                 'balance_after' => $user->wallet->balance,
             ]);
-
+            // ===== باشگاه مشتریان: اعطای امتیاز بابت سفارش =====
+            $this->clubService->awardForOrder($order);
             // ارسال نوتیفیکیشن
             $this->notifications->create(
                 "ثبت سفارش",
@@ -485,6 +488,8 @@ class OrdersController extends Controller
                 $order->payment_status = 'paid';
                 $order->payment_method = 'wallet';
                 $order->wallet_payment =  $totalAmount;
+                // ===== باشگاه مشتریان: اعطای امتیاز بابت پرداخت موفق =====
+                $this->clubService->awardForOrder($order);
             }
 
             // ================================================================
@@ -539,6 +544,8 @@ class OrdersController extends Controller
                         }
                         $o->payment_status = 'failed';
                         $o->save();
+                        // ===== باشگاه مشتریان: برگشت امتیاز =====
+                        $this->clubService->reversePointsForOrder($o);
                     }
                 }
             }
@@ -995,7 +1002,8 @@ class OrdersController extends Controller
             // ================================================================
 
             $this->paymentCompletionService->completeWalletOrder($order);
-
+            // ===== باشگاه مشتریان: اعطای امتیاز بابت سفارش =====
+            $this->clubService->awardForOrder($order);
             return response()->json([
                 'order' => $order->load('items'),
                 'status' => 'wallet',
@@ -1617,55 +1625,51 @@ class OrdersController extends Controller
     /**
      * محاسبه هزینه حمل برای ویرایش سفارش
      */
-    public function calculateShippingForEdit(Request $request, Order $order)
-    {
-        $request->validate([
-            'address_id' => 'required|exists:addresses,id',
-            'shipping_id' => 'nullable|exists:shippings,id',
-            'items' => 'required|array',
-            'items.*.price' => 'required|numeric|min:0',
-            'items.*.quantity' => 'required|integer|min:1',
-            'discount_amount' => 'nullable|numeric|min:0',
-        ]);
+    // public function calculateShippingForEdit(Request $request, Order $order)
+    // {
+    //     $request->validate([
+    //         'address_id' => 'required|exists:addresses,id',
+    //         'shipping_id' => 'nullable|exists:shippings,id',
+    //         'items' => 'required|array',
+    //         'items.*.price' => 'required|numeric|min:0',
+    //         'items.*.quantity' => 'required|integer|min:1',
+    //         'discount_amount' => 'nullable|numeric|min:0',
+    //     ]);
 
-        // محاسبه ساب‌توتال جدید
-        $subtotal = 0;
-        foreach ($request->items as $item) {
-            $subtotal += $item['price'] * $item['quantity'];
-        }
+    //     $subtotal = 0;
+    //     foreach ($request->items as $item) {
+    //         $subtotal += $item['price'] * $item['quantity'];
+    //     }
 
-        $address = Address::with(['province', 'city'])->findOrFail($request->address_id);
-        $discountAmount = $request->discount_amount ?? 0;
+    //     $address = Address::with(['province', 'city'])->findOrFail($request->address_id);
+    //     $discountAmount = $request->discount_amount ?? 0;
 
-        // اگر shipping_id ارسال نشده، از shipping فعلی سفارش استفاده کن
-        $shippingId = $request->shipping_id ?? $order->shipping_id;
+    //     $shippingId = $request->shipping_id ?? $order->shipping_id;
 
-        // محاسبه هزینه حمل
-        $shippingService = new ShippingService();
-        $shippingCost = $shippingService->calculateCost(
-            $shippingId,
-            $address->province_id,
-            $address->city_id,
-            $subtotal
-        );
+    //     $shippingService = new ShippingService();
+    //     $shippingCost = $shippingService->calculateCost(
+    //         $shippingId,
+    //         $address->province_id,
+    //         $address->city_id,
+    //         $subtotal
+    //     );
 
-        // دریافت لیست روش‌های حمل موجود
-        $shippings = $this->getAvailableShippings($address, $subtotal, array_sum(array_column($request->items, 'quantity')));
+    //     $shippings = $this->getAvailableShippings($address, $subtotal, array_sum(array_column($request->items, 'quantity')));
 
-        $total = $subtotal - $discountAmount + $shippingCost;
+    //     $total = $subtotal - $discountAmount + $shippingCost;
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'subtotal' => $subtotal,
-                'shipping_cost' => $shippingCost,
-                'discount_amount' => $discountAmount,
-                'total' => $total,
-                'shippings' => $shippings,
-                'selected_shipping_id' => $shippingId
-            ]
-        ]);
-    }
+    //     return response()->json([
+    //         'success' => true,
+    //         'data' => [
+    //             'subtotal' => $subtotal,
+    //             'shipping_cost' => $shippingCost,
+    //             'discount_amount' => $discountAmount,
+    //             'total' => $total,
+    //             'shippings' => $shippings,
+    //             'selected_shipping_id' => $shippingId
+    //         ]
+    //     ]);
+    // }
     public function getUserAddresses(Order $order)
     {
         $addresses = $order->user->addresses()->with(['province', 'city'])->get();
@@ -1744,7 +1748,10 @@ class OrdersController extends Controller
                     ]);
                 }
             }
-
+            // ===== باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش =====
+            if ($order->payment_status === 'paid') {
+                $this->clubService->syncPointsForOrder($order);
+            }
             // ارسال نوتیفیکیشن
             $this->notifications->create(
                 "تغییر آدرس سفارش",
@@ -1856,7 +1863,10 @@ class OrdersController extends Controller
                     ]);
                 }
             }
-
+            // ===== باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش =====
+            if ($order->payment_status === 'paid') {
+                $this->clubService->syncPointsForOrder($order);
+            }
             $this->notifications->create(
                 "تغییر روش حمل",
                 "روش حمل سفارش #{$order->id} توسط ادمین تغییر کرد",
@@ -1964,7 +1974,10 @@ class OrdersController extends Controller
 
             // محاسبه مجدد سفارش
             $this->recalculateOrderTotal($order);
-
+            // ===== باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش =====
+            if ($order->payment_status === 'paid' && $order->status === 'paid') {
+                $this->clubService->syncPointsForOrder($order);
+            }
             return response()->json([
                 'success' => true,
                 'message' => 'آیتم با موفقیت اضافه شد',
@@ -1996,6 +2009,7 @@ class OrdersController extends Controller
 
             // محاسبه مجدد سفارش
             $this->recalculateOrderTotal($order);
+            $this->clubService->syncPointsForOrder($order);
 
             return response()->json([
                 'success' => true,
@@ -2009,7 +2023,6 @@ class OrdersController extends Controller
      */
     public function updateOrderItem(Request $request, Order $order, $itemId)
     {
-        // بررسی قابلیت ویرایش
         if (in_array($order->status, ['completed', 'canceled', 'shipped'])) {
             return response()->json([
                 'success' => false,
@@ -2047,14 +2060,13 @@ class OrdersController extends Controller
                 }
             }
 
-            // به‌روزرسانی آیتم
             $item->update([
                 'quantity' => $request->quantity,
                 'price' => $request->price
             ]);
 
-            // محاسبه مجدد سفارش
             $this->recalculateOrderTotal($order);
+            $this->clubService->syncPointsForOrder($order);
 
             return response()->json([
                 'success' => true,

@@ -56,6 +56,7 @@ class RunController extends Controller
             'Banner'       => 'بنر',
             'category'   => 'دسته بندی',
             'Comment'      => 'کامنت',
+            'Club'      => 'باشگاه مشتریان',
             'Channel'      => 'کانال های فروش کالا',
             'coupon'   => 'کد تخفیف',
             'Menu'   => 'منو',

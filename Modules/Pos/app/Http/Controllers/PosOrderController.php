@@ -12,6 +12,7 @@ use Modules\Users\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Modules\Club\Services\ClubService;
 use Modules\Products\Models\ProductVariant;
 use Modules\Products\Services\ProductStockService;
 
@@ -19,6 +20,7 @@ class PosOrderController extends Controller
 {
     public function __construct(
         protected ProductStockService  $productStockService,
+        protected ClubService  $clubService,
     ) {}
     /**
      * دریافت لیست فروشندگان برای فیلتر
@@ -407,7 +409,8 @@ class PosOrderController extends Controller
                 'notes' => $request->notes,
                 'paid_at' => now()
             ]);
-
+            // ===== باشگاه مشتریان: اعطای امتیاز بابت سفارش =====
+            $this->clubService->awardForPosOrder($order);
             // ۵. ثبت آیتم‌های سفارش و کم کردن موجودی
             foreach ($request->items as $item) {
                 $product = Product::find($item['product_id']);
@@ -514,7 +517,8 @@ class PosOrderController extends Controller
 
             $order->status = 'cancelled';
             $order->save();
-
+            // ===== باشگاه مشتریان: برگشت امتیاز =====
+            $this->clubService->reversePointsForPosOrder($order);
             DB::commit();
 
             return response()->json([
