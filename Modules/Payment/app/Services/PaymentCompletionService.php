@@ -5,6 +5,8 @@ namespace Modules\Payment\Services;
 use App\Services\SmsService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Club\Services\ClubBenefitService;
+use Modules\Club\Services\ClubService;
 use Modules\Gateway\Models\GatewayTransaction;
 use Modules\Notifications\Services\NotificationService;
 use Modules\Orders\Models\Order;
@@ -93,6 +95,21 @@ class PaymentCompletionService
         ]);
 
         $user = $order->user;
+        // ===== باشگاه مشتریان =====
+        $clubService  = app(ClubService::class);
+        $clubBenefits = app(ClubBenefitService::class);
+
+        // 1) اعطای امتیاز
+        $clubService->awardForOrder($order);
+
+        // 2) ثبت مصرف تخفیف باشگاه (اگر club_discount > 0)
+        if ((int) $order->club_discount > 0) {
+            $clubBenefits->markDiscountUsed($user, $order, (int) $order->club_discount);
+        }
+
+        // توجه: markFreeShippingUsed قبلاً در checkout ثبت شده
+        // و اگر سفارش ناموفق شود، کران‌جاب آن را حذف می‌کند
+        // ===== پایان باشگاه =====
 
         try {
             $this->notificationService->create(

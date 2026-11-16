@@ -22,7 +22,7 @@ class Shipping extends Model
         'is_free',
         'for_club',
         'status'
-        
+
     ];
     protected $table = "shippings";
     protected $casts = [
@@ -31,5 +31,17 @@ class Shipping extends Model
     public function conditions()
     {
         return $this->hasMany(Condition::class);
+    }
+    public static function freeShippingForClub(): ?self
+    {
+        return static::where('for_club', true)
+            ->where('is_free', true)
+            ->where('status', true)
+            ->first();
+    }
+
+    public function isClubFreeShipping(): bool
+    {
+        return (bool) $this->for_club && (bool) $this->is_free;
     }
 }

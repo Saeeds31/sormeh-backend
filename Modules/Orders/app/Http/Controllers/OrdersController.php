@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Modules\Addresses\Models\Address;
 use Modules\Cart\Models\Cart;
+use Modules\Club\Models\ClubBenefitUsage;
+use Modules\Club\Models\UserPoint;
+use Modules\Club\Services\ClubBenefitService;
+use Modules\Club\Services\ClubLevelService;
 use Modules\Club\Services\ClubService;
 use Modules\Coupons\Models\Coupon;
 use Modules\Coupons\Services\CouponService;
@@ -23,6 +27,7 @@ use Modules\Payment\Services\PaymentCompletionService;
 use Modules\Payment\Services\PaymentService;
 use Modules\Products\Models\ProductVariant;
 use Modules\Products\Services\ProductStockService;
+use Modules\Settings\Models\Setting;
 use Modules\Shipping\Models\Shipping;
 use Modules\Shipping\Services\ShippingService;
 use Modules\Users\Models\User;
@@ -727,8 +732,35 @@ class OrdersController extends Controller
             $discountAmount = $couponResult['discount'];
             $coupon = $couponResult['coupon'];
         }
+        // --------------------------------------------------------
+        // 5.5) تخفیف باشگاه
+        // --------------------------------------------------------
+        $clubEnabled  = (bool) Setting::where('key', 'club.enabled')->value('value');
+        $clubDiscount = 0;
+
+        if ($clubEnabled) {
+            $amountAfterCoupon = max(0, $subtotal - $discountAmount);
+            $clubResult = app(ClubBenefitService::class)
+                ->applyDiscount($user, $amountAfterCoupon);
+            $clubDiscount = $clubResult['discount'];
+        }
 
         // 6. محاسبه هزینه حمل و نقل
+        $freeShippingMethod = Shipping::freeShippingForClub();
+        $usingFreeShipping  = $freeShippingMethod
+            && (int) $request->shipping_id === (int) $freeShippingMethod->id;
+
+        if ($usingFreeShipping) {
+            $canUse = app(ClubBenefitService::class)
+                ->canUseFreeShipping($user);
+
+            if (!$canUse) {
+                return response()->json([
+                    'message' => 'شما مجاز به استفاده از ارسال رایگان در این ماه نیستید'
+                ], 422);
+            }
+        }
+
         $shippingMethod = Shipping::findOrFail($request->shipping_id);
 
         $reservationOrderId = $request->get('parent_order_id');
@@ -768,8 +800,11 @@ class OrdersController extends Controller
                 $subtotal
             );
         }
+        if ($usingFreeShipping) {
+            $shippingCost = 0;
+        }
         // 7. جمع نهایی
-        $total = $subtotal - $discountAmount + $shippingCost;
+        $total = $subtotal - $discountAmount - $clubDiscount + $shippingCost;
 
         // 8. بررسی موجودی کیف پول
         $walletBalance = $user->wallet?->balance ?? 0;
@@ -811,7 +846,9 @@ class OrdersController extends Controller
             $address,
             $user_note,
             $reservationType,
-            $reservedUntil
+            $reservedUntil,
+            $usingFreeShipping,
+            $clubDiscount
         ) {
             // ================================================================
             // مرحله 1: قفل کردن و بررسی موجودی همه تنوع‌ها
@@ -882,6 +919,7 @@ class OrdersController extends Controller
                 'shipping_cost' => $shippingCost,
                 'total' => $total,
                 'user_note' => $user_note,
+                'club_discount'   => $clubDiscount,
                 'wallet_payment' => $fromWallet,
                 'online_payment' => $toPayOnline,
                 'payment_method' => $request->payment_method,
@@ -943,6 +981,13 @@ class OrdersController extends Controller
             // ================================================================
             if ($toPayOnline === 0)
                 Cart::where('user_id', $user->id)->delete();
+            // ================================================================
+            // ★ ثبت مصرف ارسال رایگان باشگاه (قبل از پرداخت، برای رزرو سهمیه)
+            // ================================================================
+            if ($usingFreeShipping) {
+                app(ClubBenefitService::class)
+                    ->markFreeShippingUsed($user, $order);
+            }
 
             // ================================================================
             // مرحله 8: پرداخت آنلاین (اگر نیاز باشد)
@@ -1146,31 +1191,74 @@ class OrdersController extends Controller
                 }
             }
         }
+        // --------------------------------------------------------
+        // 6) محاسبه تخفیف باشگاه (فقط نمایش)
+        // --------------------------------------------------------
+        $clubEnabled = (bool) Setting::where('key', 'club.enabled')->value('value');
+
+        $clubDiscount = 0;
+        $clubDiscountPercent = 0;
+        $clubInfo = null;
+
+        if ($clubEnabled) {
+            $clubBenefits = app(ClubBenefitService::class);
+            $levels       = app(ClubLevelService::class);
+
+            // مبلغ پایه برای تخفیف باشگاه: بعد از تخفیف محصول و کوپن
+            $amountAfterCoupon = max(0, $subtotal - $productDiscount - $couponDiscount);
+            $result = $clubBenefits->applyDiscount($user, $amountAfterCoupon);
+
+            $clubDiscount        = $result['discount'];
+            $clubDiscountPercent = $result['percent'];
+
+            $row   = UserPoint::where('user_id', $user->id)->first();
+            $level = $row?->level ?? 'bronze';
+
+            $allowed = $levels->freeShippingFor($level);
+            $used    = ClubBenefitUsage::where('user_id', $user->id)
+                ->where('benefit_type', 'free_shipping')
+                ->where('period', now()->format('Y-m'))
+                ->count();
+
+            $method = Shipping::freeShippingForClub();
+
+            $clubInfo = [
+                'level'                  => $level,
+                'discount_percent'       => $clubDiscountPercent,
+                'allowed_per_month'      => (int) $allowed,
+                'used_this_month'        => (int) $used,
+                'remaining'              => max(0, (int) $allowed - (int) $used),
+                'can_use_free_shipping'  => $clubBenefits->canUseFreeShipping($user),
+                'free_shipping_method_id' => $method?->id,
+            ];
+        }
 
         // --------------------------------------------------------
-        // 6) مبلغ پرداختی
+        // 7) مبلغ پرداختی
         // --------------------------------------------------------
-        $payable = max(0, $subtotal - $productDiscount - $couponDiscount + $shippingCost);
+        $payable = max(0, $subtotal - $productDiscount - $couponDiscount - $clubDiscount + $shippingCost);
 
         return response()->json([
             'success' => true,
             'reservationOrder' => $reservationOrder,
             'summary' => [
-                'subtotal'          => (int)$subtotal,
-                'product_discount'  => (int)$productDiscount,
-                'shipping_cost'     => (int)$shippingCost,
-                'coupon_discount'   => (int)$couponDiscount,
-                'payable_amount'    => (int)$payable,
+                'subtotal'              => (int) $subtotal,
+                'product_discount'      => (int) $productDiscount,
+                'shipping_cost'         => (int) $shippingCost,
+                'coupon_discount'       => (int) $couponDiscount,
+                'club_discount'         => (int) $clubDiscount,
+                'club_discount_percent' => $clubDiscountPercent,
+                'payable_amount'        => (int) $payable,
             ],
-
             'address' => $address,
-            'wallet' => $user->wallet,
+            'wallet'  => $user->wallet,
             'shipping_method' => [
-                'id' => $shipping->id,
+                'id'   => $shipping->id,
                 'name' => $shipping->title,
-                'cost' => $shippingCost
+                'cost' => $shippingCost,
             ],
             'coupon' => $request->coupon_code ?? null,
+            'club'   => $clubInfo,
         ]);
     }
     public function userDashboardOrders(Request $request)

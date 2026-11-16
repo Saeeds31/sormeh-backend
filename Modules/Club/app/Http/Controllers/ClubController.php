@@ -10,6 +10,8 @@ use Modules\Club\Models\UserPoint;
 use Modules\Club\Services\ClubBenefitService;
 use Modules\Club\Services\ClubLevelService;
 use Modules\Club\Services\ClubService;
+use Modules\Settings\Models\Setting;
+use Modules\Shipping\Models\Shipping;
 use Modules\Users\Models\User;
 
 class ClubController extends Controller
@@ -160,5 +162,57 @@ class ClubController extends Controller
             PointTransaction::where('user_id', $user->id)
                 ->latest()->paginate(20)
         );
+    }
+
+    public function freeShippingStatus()
+    {
+        $user = auth()->user();
+        $benefits = app(ClubBenefitService::class);
+        $levels   = app(ClubLevelService::class);
+
+        $row   = UserPoint::where('user_id', $user->id)->first();
+        $level = $row?->level ?? 'bronze';
+
+        $allowed = $levels->freeShippingFor($level);
+        $used    = ClubBenefitUsage::where('user_id', $user->id)
+            ->where('benefit_type', 'free_shipping')
+            ->where('period', now()->format('Y-m'))
+            ->count();
+
+        $method = Shipping::freeShippingForClub();
+
+        return response()->json([
+            'enabled'               => (bool) Setting::where('key', 'club.enabled')->value('value'),
+            'level'                 => $level,
+            'allowed_per_month'     => (int) $allowed,
+            'used_this_month'       => (int) $used,
+            'remaining'             => max(0, (int) $allowed - (int) $used),
+            'can_use'               => $benefits->canUseFreeShipping($user),
+            'free_shipping_method'  => $method ? [
+                'id'    => $method->id,
+                'title' => $method->title,
+                'cost'  => 0,
+            ] : null,
+        ]);
+    }
+    public function validateFreeShipping(Request $request)
+    {
+        $user = auth()->user();
+        $benefits = app(ClubBenefitService::class);
+
+        if (!$benefits->canUseFreeShipping($user)) {
+            return response()->json([
+                'allowed' => false,
+                'message' => 'شما مجاز به استفاده از ارسال رایگان در این ماه نیستید',
+            ]);
+        }
+
+        $method =  Shipping::freeShippingForClub();
+
+        return response()->json([
+            'allowed' => true,
+            'shipping_id' => $method?->id,
+            'shipping_cost' => 0,
+        ]);
     }
 }

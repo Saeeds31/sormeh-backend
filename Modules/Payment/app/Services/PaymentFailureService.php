@@ -4,6 +4,7 @@ namespace Modules\Payment\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Modules\Club\Models\ClubBenefitUsage;
 use Modules\Coupons\Services\CouponService;
 use Modules\Notifications\Services\NotificationService;
 use Modules\Orders\Models\Order;
@@ -134,6 +135,12 @@ class PaymentFailureService
                     );
                 }
             }
+            /*
+             * باشگاه مشتریان: برگرداندن سهمیه ارسال رایگان
+             */
+            ClubBenefitUsage::where('order_id', $order->id)
+                ->where('benefit_type', 'free_shipping')
+                ->delete();
 
             /*
              * تغییر وضعیت سفارش

@@ -28,6 +28,7 @@ class Order extends Model
         'shipping_id',
         'subtotal',
         'discount_amount',
+        'club_discount',
         'shipping_cost',
         'total',
         'wallet_payment',
