@@ -326,4 +326,89 @@ class SpecificationsController extends Controller
             'data' => $fullMatch->isNotEmpty() ? $fullMatch : $products,
         ]);
     }
+    /**
+     * نمایش پروفایل زیبایی یک کاربر (برای پنل ادمین)
+     * GET /v1/admin/users/{userId}/beauty-profile
+     */
+    public function userBeautyProfile($userId)
+    {
+        $selections = UserSpecificationSelection::where('user_id', $userId)
+            ->whereHas('specification', function ($q) {
+                $q->where('is_system', true);
+            })
+            ->with([
+                'specification:id,title,is_system',
+                'specificationValue:id,specification_id,value',
+            ])
+            ->get();
+
+        // اگر کاربر انتخاب نکرده باشد
+        if ($selections->isEmpty()) {
+            return response()->json([
+                'message' => 'کاربر هنوز پروفایل زیبایی خود را تکمیل نکرده است.',
+                'success' => true,
+                'has_profile' => false,
+                'data' => [],
+            ]);
+        }
+
+        $data = $selections->map(function ($sel) {
+            return [
+                'specification_id' => $sel->specification_id,
+                'title' => $sel->specification?->title,
+                'specification_value_id' => $sel->specification_value_id,
+                'value' => $sel->specificationValue?->value,
+                'selected_at' => $sel->created_at?->toDateTimeString(),
+            ];
+        });
+
+        return response()->json([
+            'message' => 'پروفایل زیبایی کاربر',
+            'success' => true,
+            'has_profile' => true,
+            'data' => $data,
+        ]);
+    }
+    /**
+     * نمایش انتخاب‌های خود کاربر (پنل کاربری)
+     * GET /v1/specifications/my-selections
+     */
+    public function mySelections(Request $request)
+    {
+        $userId = $request->user()->id;
+
+        $selections = UserSpecificationSelection::where('user_id', $userId)
+            ->with([
+                'specification:id,title,is_system',
+                'specificationValue:id,specification_id,value',
+            ])
+            ->get();
+
+        if ($selections->isEmpty()) {
+            return response()->json([
+                'message' => 'شما هنوز مشخصاتی انتخاب نکرده‌اید.',
+                'success' => true,
+                'has_selections' => false,
+                'data' => [],
+            ]);
+        }
+
+        $data = $selections->map(function ($sel) {
+            return [
+                'specification_id' => $sel->specification_id,
+                'title' => $sel->specification?->title,
+                'is_system' => (bool) $sel->specification?->is_system,
+                'specification_value_id' => $sel->specification_value_id,
+                'value' => $sel->specificationValue?->value,
+                'selected_at' => $sel->created_at?->toDateTimeString(),
+            ];
+        });
+
+        return response()->json([
+            'message' => 'انتخاب‌های شما',
+            'success' => true,
+            'has_selections' => true,
+            'data' => $data,
+        ]);
+    }
 }

@@ -33,6 +33,8 @@ Route::middleware(['auth:sanctum'])->prefix('v1/admin')->group(function () {
         Route::put('/{id}', [SpecificationValueController::class, 'update']);   // ویرایش مقدار
         Route::delete('/{id}', [SpecificationValueController::class, 'destroy']); // حذف مقدار
     });
+    Route::get('/users/{userId}/beauty-profile', [SpecificationsController::class, 'userBeautyProfile'])
+        ->name('admin.users.beautyProfile');
 });
 
 /*
@@ -49,7 +51,7 @@ Route::prefix('v1/specifications')->group(function () {
 });
 
 // ---- مسیرهای کاربری: نیازمند احراز هویت ----
-Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
+Route::middleware(['auth:sanctum'])->prefix('v1/front')->group(function () {
 
     Route::prefix('specifications')->group(function () {
         // ۲) ذخیره انتخاب‌های کاربر
@@ -59,5 +61,7 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
         // ۳) پیشنهاد محصول بر اساس انتخاب‌های کاربر
         Route::get('/recommendations', [SpecificationsController::class, 'recommendations'])
             ->name('specifications.recommendations');
+        Route::get('/my-selections', [SpecificationsController::class, 'mySelections'])
+            ->name('specifications.mySelections');
     });
 });
