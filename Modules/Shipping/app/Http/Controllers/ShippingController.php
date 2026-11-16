@@ -4,6 +4,7 @@ namespace Modules\Shipping\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Modules\Addresses\Models\Address;
 use Modules\Cart\Models\Cart;
 use Modules\Notifications\Services\NotificationService;
@@ -43,27 +44,44 @@ class ShippingController extends Controller
     public function store(ShippingStoreRequest $request, NotificationService $notifications)
     {
         $data = $request->validated();
-        $Shipping = Shipping::create($data);
-        if (!empty($data['conditions'])) {
-            foreach ($data['conditions'] as $condition) {
-                $condition = $Shipping->conditions()->create([
-                    'condition'   => $condition['condition'] ?? "total",
-                    'type' => $condition['type'] ?? "==",
-                    'value' => $condition['value'] ?? 0,
+
+        $shipping = DB::transaction(function () use ($data) {
+            $exists = Shipping::where('for_club', 1)
+                ->where('is_free', 1)
+                ->lockForUpdate()
+                ->exists();
+
+            if ($exists && ($data['is_free'] ?? false) && ($data['for_club'] ?? false)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "قبل یک روش ارسال رایگان در باشگاه مشتریان ثبت شده است"
+                ], 422);
+            }
+
+            $shipping = Shipping::create($data);
+
+            foreach ($data['conditions'] ?? [] as $item) {
+                $shipping->conditions()->create([
+                    'condition' => $item['condition'] ?? 'total',
+                    'type'      => $item['type'] ?? '==',
+                    'value'     => $item['value'] ?? 0,
                 ]);
             }
-        }
+
+            return $shipping;
+        });
 
         $notifications->create(
             "ثبت روش حمل و نقل",
-            "روش حمل و نقل {$Shipping->title} در سیستم ثبت شد",
+            "روش حمل و نقل {$shipping->title} در سیستم ثبت شد",
             "notification_order",
-            ['shipping' => $Shipping->id]
+            ['shipping' => $shipping->id]
         );
+
         return response()->json([
             'success' => true,
             'message' => 'روش حمل و نقل ثبت شد',
-            'data'    => $Shipping
+            'data'    => $shipping->load('conditions'),
         ], 201);
     }
 
@@ -85,49 +103,77 @@ class ShippingController extends Controller
     public function update(ShippingUpdateRequest $request, Shipping $shippingMethod, NotificationService $notifications)
     {
         $data = $request->validated();
-        $shippingMethod->update($data);
-        $conditions = $data['conditions'] ?? [];
-        $sentConditionIds =  collect($conditions)
-            ->pluck('id')
-            ->filter()
-            ->toArray();
 
-        $shippingMethod->conditions()
-            ->whereNotIn('id', $sentConditionIds)
-            ->delete();
+        DB::transaction(function () use ($data, $shippingMethod) {
+            // --- بررسی منطق: فقط یک روش ارسال رایگان باشگاه ---
+            // مقادیر جدید (اگر ارسال نشده باشند، مقدار فعلی حفظ می‌شود)
+            $willBeFreeForClub = ($data['is_free'] ?? $shippingMethod->is_free)
+                && ($data['for_club'] ?? $shippingMethod->for_club);
 
-        foreach ($data['conditions'] as $conditionData) {
-            if (!empty($conditionData['id'])) {
-                $condition = Condition::where('shipping_id', $shippingMethod->id)
-                    ->where('id', $conditionData['id'])
-                    ->firstOrFail();
+            if ($willBeFreeForClub) {
+                $exists = Shipping::where('for_club', 1)
+                    ->where('is_free', 1)
+                    ->where('id', '!=', $shippingMethod->id) // خود رکورد را نادیده بگیر
+                    ->lockForUpdate()
+                    ->exists();
 
-                $condition->update([
-                    'condition'   => $conditionData['condition'] ?? "total",
-                    'type' => $conditionData['type'] ?? "==",
-                    'value' => $conditionData['value'] ?? 0,
-                ]);
-            } else {
-                $condition = $shippingMethod->conditions()->create([
-                    'condition'   => $conditionData['condition'] ?? "total",
-                    'type' => $conditionData['type'] ?? "==",
-                    'value' => $conditionData['value'] ?? 0,
-                ]);
+                if ($exists) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "قبل یک روش ارسال رایگان در باشگاه مشتریان ثبت شده است"
+                    ], 422);
+                }
             }
-        }
+
+            // --- به‌روزرسانی خود Shipping ---
+            $shippingMethod->update($data);
+
+            // --- همگام‌سازی شرایط ---
+            $conditions = $data['conditions'] ?? [];
+
+            $sentConditionIds = collect($conditions)
+                ->pluck('id')
+                ->filter()
+                ->toArray();
+
+            $shippingMethod->conditions()
+                ->whereNotIn('id', $sentConditionIds)
+                ->delete();
+
+            foreach ($conditions as $conditionData) {
+                if (!empty($conditionData['id'])) {
+                    $condition = Condition::where('shipping_id', $shippingMethod->id)
+                        ->where('id', $conditionData['id'])
+                        ->firstOrFail();
+
+                    $condition->update([
+                        'condition' => $conditionData['condition'] ?? 'total',
+                        'type'      => $conditionData['type'] ?? '==',
+                        'value'     => $conditionData['value'] ?? 0,
+                    ]);
+                } else {
+                    $shippingMethod->conditions()->create([
+                        'condition' => $conditionData['condition'] ?? 'total',
+                        'type'      => $conditionData['type'] ?? '==',
+                        'value'     => $conditionData['value'] ?? 0,
+                    ]);
+                }
+            }
+        });
+
         $notifications->create(
             "ویرایش روش حمل و نقل",
             "روش حمل و نقل {$shippingMethod->title} در سیستم ویرایش شد",
             "notification_order",
             ['shipping' => $shippingMethod->id]
         );
+
         return response()->json([
             'success' => true,
             'message' => 'روش حمل و نقل به روز رسانی شد',
-            'data'    => $shippingMethod
+            'data'    => $shippingMethod->load('conditions'),
         ]);
     }
-
     /**
      * Remove the specified shipping method.
      */
