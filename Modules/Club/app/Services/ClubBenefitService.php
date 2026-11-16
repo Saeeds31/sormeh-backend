@@ -95,4 +95,17 @@ class ClubBenefitService
             'period'       => now()->format('Y-m'),
         ]);
     }
+
+    /**
+     * آزادسازی سهمیه ارسال رایگان مصرف‌شده برای یک سفارش.
+     * وقتی سفارش لغو/ناموفق/مرجوع می‌شود، سهمیه ماهانه کاربر باید برگردد.
+     *
+     * این متد idempotent است: اگر رکوردی وجود نداشته باشد، خطا نمی‌دهد.
+     */
+    public function releaseFreeShippingUsage(Order $order): void
+    {
+        ClubBenefitUsage::where('order_id', $order->id)
+            ->where('benefit_type', 'free_shipping')
+            ->delete();
+    }
 }

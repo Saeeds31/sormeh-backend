@@ -35,6 +35,8 @@ class ClubSettingService
 
             // کلید کلی
             ['key' => 'club.enabled',               'value' => '1',      'type' => 'boolean', 'label' => 'فعال بودن باشگاه مشتریان',        'group' => 'club'],
+            ['key' => 'club.profile_completion_points', 'value' => '4', 'type' => 'number', 'label' => 'امتیاز تکمیل پروفایل کاربری', 'group' => 'club'],
+            ['key' => 'club.preferences_completion_points', 'value' => '3', 'type' => 'number', 'label' => 'امتیاز تکمیل انتخاب سلیقه/مشخصات', 'group' => 'club'],
         ];
     }
 

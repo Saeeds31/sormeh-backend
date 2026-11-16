@@ -4,12 +4,19 @@ namespace Modules\Specifications\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Modules\Club\Models\PointTransaction;
+use Modules\Club\Services\ClubService;
 use Modules\Notifications\Services\NotificationService;
 use Modules\Products\Models\Product;
+use Modules\Settings\Models\Setting;
 use Modules\Specifications\Http\Requests\StoreSpecificationRequest;
+use Modules\Specifications\Http\Requests\StoreUserSelectionsRequest;
 use Modules\Specifications\Http\Requests\UpdateSpecificationRequest;
 use Modules\Specifications\Models\Specification;
 use Modules\Specifications\Models\SpecificationValue;
+use Modules\Specifications\Models\UserSpecificationSelection;
+use Modules\Users\Models\User;
 
 class SpecificationsController extends Controller
 {
@@ -98,6 +105,12 @@ class SpecificationsController extends Controller
     public function destroy($id, NotificationService $notifications)
     {
         $spec = Specification::findOrFail($id);
+        if ($spec->is_system) {
+            return response()->json([
+                'message' => 'این مشخصه سیستمی است و قابل حذف نیست.',
+                'success' => false,
+            ], 403);
+        }
         $notifications->create(
             "حذف جدول مشخصات",
             "جدول مشخصات {$spec->title} از سیستم حذف شد",
@@ -157,5 +170,160 @@ class SpecificationsController extends Controller
                 'data' => $product,
             ]
         );
+    }
+    /**
+     *   برگرداندن مشخصات سیستمی همراه با مقادیرشان
+     * GET /specifications/system
+     */
+    public function systemSpecifications()
+    {
+        $data = Specification::system()
+            ->with(['values' => function ($q) {
+                $q->orderBy('id');
+            }])
+            ->get();
+
+        return response()->json([
+            'message' => 'مشخصات سیستمی',
+            'success' => true,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     *  ذخیره انتخاب‌های کاربر
+     * POST /specifications/user-selections
+     */
+    public function storeUserSelections(StoreUserSelectionsRequest $request)
+    {
+        $userId = $request->user()->id;
+        $user   = $request->user();
+
+        // ================================================================
+        // باشگاه مشتریان: بررسی اینکه آیا کاربر قبلاً انتخابی داشته
+        // ================================================================
+        $hadSelectionsBefore = UserSpecificationSelection::where('user_id', $userId)->exists();
+
+        DB::transaction(function () use ($request, $userId) {
+            // پاک کردن انتخاب‌های قبلی (sync کامل)
+            UserSpecificationSelection::where('user_id', $userId)->delete();
+
+            $rows = [];
+            foreach ($request->selections as $sel) {
+                $rows[] = [
+                    'user_id' => $userId,
+                    'specification_id' => $sel['specification_id'],
+                    'specification_value_id' => $sel['specification_value_id'],
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+
+            UserSpecificationSelection::insert($rows);
+        });
+
+        $selections = UserSpecificationSelection::where('user_id', $userId)
+            ->with(['specification:id,title', 'specificationValue:id,value'])
+            ->get();
+
+        // ================================================================
+        // باشگاه مشتریان: اگر قبلاً انتخاب نداشت و حالا دارد → امتیاز بده
+        // ================================================================
+        if (!$hadSelectionsBefore && $selections->isNotEmpty()) {
+            $this->awardPreferencesCompletionPoints($user);
+        }
+
+        return response()->json([
+            'message' => 'انتخاب‌های شما با موفقیت ذخیره شد.',
+            'success' => true,
+            'data' => $selections,
+        ]);
+    }
+
+    /**
+     * اعطای امتیاز تکمیل انتخاب سلیقه/مشخصات (یک‌بار برای هر کاربر).
+     */
+    protected function awardPreferencesCompletionPoints(User $user): void
+    {
+        $clubEnabled = (bool) Setting::where('key', 'club.enabled')->value('value');
+        if (!$clubEnabled) {
+            return;
+        }
+
+        $points = (int) Setting::where('key', 'club.preferences_completion_points')->value('value');
+        if ($points <= 0) {
+            return;
+        }
+
+        // جلوگیری از امتیاز تکراری
+        $alreadyAwarded = PointTransaction::where('user_id', $user->id)
+            ->where('source', 'preferences')
+            ->exists();
+
+        if ($alreadyAwarded) {
+            return;
+        }
+
+        app(ClubService::class)->addPoints(
+            $user,
+            $points,
+            'تکمیل انتخاب سلیقه',
+            'تکمیل انتخاب سلیقه/مشخصات کاربری',
+            'preferences',
+            null
+        );
+    }
+
+    /**
+     *  پیشنهاد محصول بر اساس انتخاب‌های کاربر
+     * GET /specifications/recommendations
+     */
+    public function recommendations(Request $request)
+    {
+        $userId = $request->user()->id;
+
+        $selections = UserSpecificationSelection::where('user_id', $userId)->get();
+
+        if ($selections->isEmpty()) {
+            return response()->json([
+                'message' => 'ابتدا مشخصات خود را انتخاب کنید.',
+                'success' => false,
+                'data' => [],
+            ], 422);
+        }
+
+        $specIds = $selections->pluck('specification_id')->unique()->values();
+        $valueIds = $selections->pluck('specification_value_id')->unique()->values();
+
+        // محصولاتی که با این مقدارها در جدول واسط تطابق دارند
+        // pivot: product_id, specification_id, specification_value_id
+        $query = Product::query()
+            ->whereHas('specifications', function ($q) use ($valueIds) {
+                $q->whereIn('product_specifications.specification_value_id', $valueIds);
+            });
+
+        // امتیازدهی: هرچه تعداد تطابق بیشتر باشد محصول بالاتر می‌آید
+        $products = $query
+            ->withCount(['specifications as matched_count' => function ($q) use ($valueIds) {
+                $q->whereIn('product_specifications.specification_value_id', $valueIds);
+            }])
+            ->orderByDesc('matched_count')
+            ->limit(20)
+            ->get();
+
+        // فیلتر نهایی: محصول باید همه مشخصات انتخاب‌شده را پوشش دهد (اختیاری)
+        $fullMatch = $products->filter(function ($product) use ($specIds, $valueIds) {
+            $productValues = $product->specifications
+                ->pluck('pivot.specification_value_id')
+                ->unique();
+
+            return $valueIds->diff($productValues)->isEmpty();
+        })->values();
+
+        return response()->json([
+            'message' => 'محصولات پیشنهادی',
+            'success' => true,
+            'data' => $fullMatch->isNotEmpty() ? $fullMatch : $products,
+        ]);
     }
 }

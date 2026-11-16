@@ -11,6 +11,7 @@ use Modules\Wallet\Models\Wallet;
 use Laravel\Sanctum\HasApiTokens;
 use Modules\Cart\Models\Cart;
 use Modules\Products\Models\Product;
+use Modules\Specifications\Models\UserSpecificationSelection;
 
 // use Modules\Users\Database\Factories\UserFactory;
 
@@ -39,6 +40,10 @@ class User extends Authenticatable
     /**
      * Get all addresses for the user.
      */
+    public function specificationSelections()
+    {
+        return $this->hasMany(UserSpecificationSelection::class);
+    }
     public function addresses()
     {
         return $this->hasMany(Address::class);

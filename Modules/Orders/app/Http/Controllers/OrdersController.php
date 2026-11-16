@@ -283,6 +283,7 @@ class OrdersController extends Controller
             'subtotal' => 'required|numeric|min:0',
             'user_note'       => 'nullable|string',
             'discount_amount' => 'nullable|numeric|min:0',
+            'club_discount'   => 'nullable|numeric|min:0',
             'shipping_cost' => 'nullable|numeric|min:0',
             'total' => 'required|numeric|min:0',
             'items' => 'required|array|min:1',
@@ -293,6 +294,7 @@ class OrdersController extends Controller
             'parent_order_id' => 'nullable|exists:orders,id',
             'reservation_type' => 'nullable|in:three_days,seven_days',
         ]);
+
         $reservationType = $request->input('reservation_type', 'none');
 
         return DB::transaction(function () use ($data, $reservationType) {
@@ -307,8 +309,61 @@ class OrdersController extends Controller
                 $user->load('wallet');
             }
 
+            // ================================================================
+            // باشگاه مشتریان: بررسی ارسال رایگان
+            // ================================================================
+            $freeShippingMethod = Shipping::freeShippingForClub();
+            $usingFreeShipping  = $freeShippingMethod
+                && (int) $data['shipping_id'] === (int) $freeShippingMethod->id;
+
+            if ($usingFreeShipping) {
+                $clubBenefits = app(ClubBenefitService::class);
+
+                if (!$clubBenefits->canUseFreeShipping($user)) {
+                    return response()->json([
+                        'message' => 'کاربر مجاز به استفاده از ارسال رایگان باشگاه در این ماه نیست'
+                    ], 422);
+                }
+            }
+
+            // ================================================================
+            // محاسبه تخفیف باشگاه (اگر ادمین نفرستاده باشد، خودکار محاسبه می‌شود)
+            // ================================================================
+            $clubDiscount = (int) ($data['club_discount'] ?? 0);
+            $clubEnabled  = (bool) Setting::where('key', 'club.enabled')->value('value');
+
+            if ($clubEnabled && $clubDiscount === 0) {
+                // مبلغ پایه: بعد از تخفیف دستی/کوپن
+                $amountAfterDiscount = max(0, (int) $data['subtotal'] - (int) ($data['discount_amount'] ?? 0));
+                $clubResult = app(ClubBenefitService::class)
+                    ->applyDiscount($user, $amountAfterDiscount);
+                $clubDiscount = (int) $clubResult['discount'];
+            }
+
+            // ================================================================
+            // هزینه حمل نهایی: اگر ارسال رایگان باشگاه → صفر
+            // ================================================================
+            $shippingCost = (int) ($data['shipping_cost'] ?? 0);
+            if ($usingFreeShipping) {
+                $shippingCost = 0;
+            }
+
+            // ================================================================
+            // جمع نهایی (اگر ادمین total نفرستاده باشد یا نادرست باشد، بازمحاسبه)
+            // ================================================================
+            $expectedTotal = (int) $data['subtotal']
+                - (int) ($data['discount_amount'] ?? 0)
+                - $clubDiscount
+                + $shippingCost;
+
+            $total = (int) $data['total'];
+            // اگر ادمین total همگام با club_discount/رایگان نبود، از مقدار محاسبه‌شده استفاده کن
+            if ($total !== $expectedTotal) {
+                $total = $expectedTotal;
+            }
+
             // بررسی موجودی کیف پول
-            if ($user->wallet->balance < $data['total']) {
+            if ($user->wallet->balance < $total) {
                 return response()->json(['message' => 'موجودی کیف پول کافی نیست'], 422);
             }
 
@@ -339,37 +394,35 @@ class OrdersController extends Controller
             }
 
             // تعیین وضعیت سفارش
-            $orderStatus = 'paid';
+            $orderStatus   = 'paid';
             $paymentStatus = 'paid';
 
-            // اگر parent_order وجود داشته باشد
             if ($parentOrder) {
-                // سفارش فرزند به همان روش والد ثبت می‌شود
-                $orderStatus = 'paid';
+                $orderStatus   = 'paid';
                 $paymentStatus = 'paid';
             } else if (!empty($data['reservation_type'])) {
-                // سفارش رزرو جدید
-                $orderStatus = 'reserved';
-                $paymentStatus = 'paid'; // چون از کیف پول پرداخت می‌شود
+                $orderStatus   = 'reserved';
+                $paymentStatus = 'paid';
             }
 
             // ایجاد سفارش
             $order = Order::create([
-                'user_id' => $data['user_id'],
-                'address_id' => $data['address_id'],
-                'shipping_id' => $data['shipping_id'],
-                'user_note' => $data['user_note'],
-                'subtotal' => $data['subtotal'],
+                'user_id'         => $data['user_id'],
+                'address_id'      => $data['address_id'],
+                'shipping_id'     => $data['shipping_id'],
+                'user_note'       => $data['user_note'] ?? null,
+                'subtotal'        => $data['subtotal'],
                 'discount_amount' => $data['discount_amount'] ?? 0,
-                'source' => 'website',
-                'shipping_cost' => $data['shipping_cost'] ?? 0,
-                'total' => $data['total'],
-                'payment_method' => 'wallet',
-                'payment_status' => $paymentStatus,
-                'status' => $orderStatus,
+                'club_discount'   => $clubDiscount,          // ← جدید
+                'source'          => 'website',
+                'shipping_cost'   => $shippingCost,
+                'total'           => $total,
+                'payment_method'  => 'wallet',
+                'payment_status'  => $paymentStatus,
+                'status'          => $orderStatus,
                 'parent_order_id' => $parentOrder ? $data['parent_order_id'] : null,
                 'reservation_type' => $reservationType,
-                'reserved_until' => empty($parentOrder) && !empty($data['reservation_type'])
+                'reserved_until'  => empty($parentOrder) && !empty($data['reservation_type'])
                     ? now()->addDays($data['reservation_type'] === 'three_days' ? 3 : 7)
                     : null,
             ]);
@@ -379,10 +432,10 @@ class OrdersController extends Controller
                 $variant = ProductVariant::findOrFail($item['product_variant_id']);
 
                 $order->items()->create([
-                    'product_id' => $item['product_id'],
+                    'product_id'         => $item['product_id'],
                     'product_variant_id' => $item['product_variant_id'],
-                    'quantity' => $item['quantity'],
-                    'price' => $item['price'],
+                    'quantity'           => $item['quantity'],
+                    'price'              => $item['price'],
                 ]);
 
                 $variant->decrement('stock', $item['quantity']);
@@ -391,19 +444,38 @@ class OrdersController extends Controller
 
             // کم کردن موجودی کیف پول
             $user->wallet()->update([
-                'balance' => $user->wallet->balance - $data['total'],
+                'balance' => $user->wallet->balance - $total,
             ]);
 
             $user->wallet->transactions()->create([
-                'type' => 'debit',
-                'amount' => $data['total'],
-                'description' => "پرداخت برای سفارش #{$order->id}",
-                'order_id' => $order->id,
+                'type'                   => 'debit',
+                'amount'                 => $total,
+                'description'            => "پرداخت برای سفارش #{$order->id}",
+                'order_id'               => $order->id,
                 'gateway_transaction_id' => null,
-                'balance_after' => $user->wallet->balance,
+                'balance_after'          => $user->wallet->balance,
             ]);
-            // ===== باشگاه مشتریان: اعطای امتیاز بابت سفارش =====
-            $this->clubService->awardForOrder($order);
+
+            // ================================================================
+            // باشگاه مشتریان: ثبت مصرف مزایا (فقط برای سفارش paid)
+            // ================================================================
+            if ($orderStatus === 'paid') {
+                $clubBenefits = app(ClubBenefitService::class);
+
+                // 1) ثبت مصرف ارسال رایگان
+                if ($usingFreeShipping) {
+                    $clubBenefits->markFreeShippingUsed($user, $order);
+                }
+
+                // 2) ثبت مصرف تخفیف باشگاه
+                if ($clubDiscount > 0) {
+                    $clubBenefits->markDiscountUsed($user, $order, $clubDiscount);
+                }
+
+                // 3) اعطای امتیاز بابت سفارش
+                app(ClubService::class)->awardForOrder($order);
+            }
+
             // ارسال نوتیفیکیشن
             $this->notifications->create(
                 "ثبت سفارش",
@@ -428,12 +500,17 @@ class OrdersController extends Controller
         $newStatus = $data['status'];
         $oldStatus = $order->status;
 
-        return DB::transaction(function () use ($order, $newStatus, $oldStatus) {
+        // وضعیت‌هایی که «پایدار/نهایی» محسوب می‌شوند (امتیاز و مزایا فعال)
+        $paidLikeStatuses   = ['paid', 'completed', 'shipped', 'delivered'];
+        // وضعیت‌هایی که «لغو/ناموفق» محسوب می‌شوند (امتیاز و مزایا برگردانده می‌شوند)
+        $cancelLikeStatuses = ['failed', 'canceled', 'returned'];
+
+        return DB::transaction(function () use ($order, $newStatus, $oldStatus, $paidLikeStatuses, $cancelLikeStatuses) {
 
             // ================================================================
             // 0) بارگذاری فرزندان
             // ================================================================
-            $order->load(['childOrders.items.variant', 'items.variant']);
+            $order->load(['childOrders.items.variant', 'items.variant', 'user']);
 
             // ================================================================
             // 1) تغییر وضعیت به paid → فقط سفارش والد پرداخت می‌شود
@@ -461,10 +538,8 @@ class OrdersController extends Controller
                     $user->load('wallet');
                 }
 
-                // ★ فقط مبلغ سفارش والد
                 $totalAmount = $order->total;
 
-                // بررسی موجودی
                 if ($user->wallet->balance < $totalAmount) {
                     return response()->json([
                         'success' => false,
@@ -492,16 +567,14 @@ class OrdersController extends Controller
                 // آپدیت فیلدهای پرداخت فقط برای والد
                 $order->payment_status = 'paid';
                 $order->payment_method = 'wallet';
-                $order->wallet_payment =  $totalAmount;
-                // ===== باشگاه مشتریان: اعطای امتیاز بابت پرداخت موفق =====
-                $this->clubService->awardForOrder($order);
+                $order->wallet_payment = $totalAmount;
             }
 
             // ================================================================
             // 2) تغییر وضعیت به canceled/failed/returned → لغو والد + فرزندان paid
             // ================================================================
             if (
-                in_array($newStatus, ['failed', 'canceled', 'returned'])
+                in_array($newStatus, $cancelLikeStatuses)
                 && $order->payment_status === 'paid'
             ) {
                 $user = $order->user;
@@ -515,13 +588,11 @@ class OrdersController extends Controller
                         $user->load('wallet');
                     }
 
-                    // ★ فقط فرزندانی که paid هستند + خود والد
                     $paidChildOrders = $order->childOrders
                         ->where('status', 'paid');
 
                     $ordersToCancel = collect([$order])->merge($paidChildOrders);
 
-                    // محاسبه مبلغ برگشتی
                     $refundAmount = $ordersToCancel->sum('total');
 
                     if ($refundAmount > 0) {
@@ -538,8 +609,8 @@ class OrdersController extends Controller
                         ]);
                     }
 
-                    // برگشت موجودی محصولات + آپدیت payment_status
                     foreach ($ordersToCancel as $o) {
+                        // برگشت موجودی محصولات
                         foreach ($o->items as $item) {
                             $variant = $item->variant;
                             if ($variant) {
@@ -549,8 +620,19 @@ class OrdersController extends Controller
                         }
                         $o->payment_status = 'failed';
                         $o->save();
+
                         // ===== باشگاه مشتریان: برگشت امتیاز =====
                         $this->clubService->reversePointsForOrder($o);
+
+                        // ===== باشگاه مشتریان: برگشت سهمیه ارسال رایگان =====
+                        app(ClubBenefitService::class)
+                            ->releaseFreeShippingUsage($o);
+
+                        // توجه: تخفیف باشگاه (discount) را حذف نمی‌کنیم چون
+                        // پول کل سفارش برگشته و در محاسبه بعدی لحاظ می‌شود.
+                        // اگر سیاستت این است که تخفیف هم برگردد، خط زیر را فعال کن:
+                        // \Modules\Club\Models\ClubBenefitUsage::where('order_id', $o->id)
+                        //     ->where('benefit_type', 'discount')->delete();
                     }
                 }
             }
@@ -567,7 +649,35 @@ class OrdersController extends Controller
             $this->updateChildOrdersStatus($order, $newStatus);
 
             // ================================================================
-            // 5) نوتیفیکیشن
+            // 5) باشگاه مشتریان: اعطای امتیاز و ثبت مزایا اگر به paid-like رسید
+            // ================================================================
+            if (
+                in_array($newStatus, $paidLikeStatuses)
+                && $order->payment_status === 'paid'
+            ) {
+                $user = $order->user;
+
+                if ($user) {
+                    $clubBenefits = app(ClubBenefitService::class);
+
+                    // 1) اعطای امتیاز بابت سفارش
+                    $this->clubService->awardForOrder($order);
+
+                    // 2) ثبت مصرف تخفیف باشگاه
+                    if ((int) $order->club_discount > 0) {
+                        $clubBenefits->markDiscountUsed($user, $order, (int) $order->club_discount);
+                    }
+
+                    // 3) ثبت مصرف ارسال رایگان (اگر shipping_id = روش رایگان باشگاه)
+                    $freeShippingMethod = Shipping::freeShippingForClub();
+                    if ($freeShippingMethod && (int) $order->shipping_id === (int) $freeShippingMethod->id) {
+                        $clubBenefits->markFreeShippingUsed($user, $order);
+                    }
+                }
+            }
+
+            // ================================================================
+            // 6) نوتیفیکیشن
             // ================================================================
             $this->notifications->create(
                 "تغییر وضعیت",
@@ -577,7 +687,7 @@ class OrdersController extends Controller
             );
 
             // ================================================================
-            // 6) پیامک
+            // 7) پیامک
             // ================================================================
             try {
                 if ($order->user && $order->user->mobile) {
@@ -1907,24 +2017,61 @@ class OrdersController extends Controller
             $newShipping = Shipping::findOrFail($request->shipping_id);
             $address = $order->address;
 
+            // ================================================================
+            // باشگاه مشتریان: تشخیص روش رایگان باشگاه (قبلی و جدید)
+            // ================================================================
+            $clubBenefits       = app(ClubBenefitService::class);
+            $freeShippingMethod = Shipping::freeShippingForClub();
+
+            $oldIsClubFree = $freeShippingMethod
+                && (int) $order->shipping_id === (int) $freeShippingMethod->id;
+
+            $newIsClubFree = $freeShippingMethod
+                && (int) $request->shipping_id === (int) $freeShippingMethod->id;
+
+            // اگر روش جدید رایگان باشگاه است ولی کاربر مجاز نیست → خطا
+            if ($newIsClubFree && !$oldIsClubFree) {
+                if (!$clubBenefits->canUseFreeShipping($order->user)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'کاربر مجاز به استفاده از ارسال رایگان باشگاه در این ماه نیست'
+                    ], 422);
+                }
+            }
+
+            // ================================================================
             // محاسبه هزینه حمل جدید
+            // ================================================================
             $shippingService = new ShippingService();
-            $newShippingCost = $shippingService->calculateCost(
-                $request->shipping_id,
-                $address->province_id,
-                $address->city_id,
-                $order->subtotal
-            );
+
+            if ($newIsClubFree) {
+                // روش رایگان باشگاه → هزینه صفر
+                $newShippingCost = 0;
+            } else {
+                $newShippingCost = $shippingService->calculateCost(
+                    $request->shipping_id,
+                    $address->province_id,
+                    $address->city_id,
+                    $order->subtotal
+                );
+            }
 
             $shippingDiff = $newShippingCost - $order->shipping_cost;
 
+            // ================================================================
             // به‌روزرسانی روش حمل و هزینه
-            $order->shipping_id = $request->shipping_id;
+            // ================================================================
+            $order->shipping_id   = $request->shipping_id;
             $order->shipping_cost = $newShippingCost;
-            $order->total = $order->subtotal - $order->discount_amount + $newShippingCost;
+            $order->total = $order->subtotal
+                - (int) $order->discount_amount
+                - (int) $order->club_discount
+                + $newShippingCost;
             $order->save();
 
+            // ================================================================
             // مدیریت مابه‌التفاوت کیف پول
+            // ================================================================
             if ($order->payment_status === 'paid' && $shippingDiff != 0) {
                 $user = $order->user;
                 $walletBalance = $user->wallet?->balance ?? 0;
@@ -1951,10 +2098,29 @@ class OrdersController extends Controller
                     ]);
                 }
             }
-            // ===== باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش =====
-            if ($order->payment_status === 'paid') {
+
+            // ================================================================
+            // باشگاه مشتریان: مدیریت سهمیه ارسال رایگان
+            // ================================================================
+            if ($oldIsClubFree && !$newIsClubFree) {
+                // از رایگان به عادی → آزادسازی سهمیه
+                $clubBenefits->releaseFreeShippingUsage($order);
+            } elseif (!$oldIsClubFree && $newIsClubFree) {
+                // از عادی به رایگان → ثبت مصرف
+                $clubBenefits->markFreeShippingUsed($order->user, $order);
+            }
+            // (اگر هر دو رایگان یا هر دو عادی بودند، کاری لازم نیست)
+
+            // ================================================================
+            // باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش
+            // ================================================================
+            if ($order->payment_status === 'paid' && $order->status === 'paid') {
                 $this->clubService->syncPointsForOrder($order);
             }
+
+            // ================================================================
+            // نوتیفیکیشن
+            // ================================================================
             $this->notifications->create(
                 "تغییر روش حمل",
                 "روش حمل سفارش #{$order->id} توسط ادمین تغییر کرد",
@@ -2023,7 +2189,6 @@ class OrdersController extends Controller
     }
     public function addOrderItem(Request $request, Order $order)
     {
-        // بررسی قابلیت ویرایش
         if (in_array($order->status, ['completed', 'canceled', 'shipped'])) {
             return response()->json([
                 'success' => false,
@@ -2039,7 +2204,6 @@ class OrdersController extends Controller
         ]);
 
         return DB::transaction(function () use ($request, $order) {
-            // بررسی موجودی
             $variant = ProductVariant::findOrFail($request->product_variant_id);
             if ($variant->stock < $request->quantity) {
                 return response()->json([
@@ -2048,7 +2212,6 @@ class OrdersController extends Controller
                 ], 422);
             }
 
-            // ایجاد آیتم جدید
             $item = $order->items()->create([
                 'product_id' => $request->product_id,
                 'product_variant_id' => $request->product_variant_id,
@@ -2056,16 +2219,17 @@ class OrdersController extends Controller
                 'price' => $request->price
             ]);
 
-            // کم کردن موجودی
             $variant->decrement('stock', $request->quantity);
             $this->productStockService->sync($variant->product);
 
-            // محاسبه مجدد سفارش
+            // باشگاه مشتریان
+            $this->recalculateClubDiscountIfPaid($order);
             $this->recalculateOrderTotal($order);
-            // ===== باشگاه مشتریان: همگام‌سازی امتیاز با مبلغ جدید سفارش =====
+
             if ($order->payment_status === 'paid' && $order->status === 'paid') {
                 $this->clubService->syncPointsForOrder($order);
             }
+
             return response()->json([
                 'success' => true,
                 'message' => 'آیتم با موفقیت اضافه شد',
@@ -2095,9 +2259,18 @@ class OrdersController extends Controller
 
             $item->delete();
 
-            // محاسبه مجدد سفارش
+            // ================================================================
+            // باشگاه مشتریان: بازمحاسبه club_discount برای سفارش paid
+            // ================================================================
+            $this->recalculateClubDiscountIfPaid($order);
+
+            // محاسبه مجدد subtotal و total (با club_discount جدید)
             $this->recalculateOrderTotal($order);
-            $this->clubService->syncPointsForOrder($order);
+
+            // همگام‌سازی امتیاز
+            if ($order->payment_status === 'paid' && $order->status === 'paid') {
+                $this->clubService->syncPointsForOrder($order);
+            }
 
             return response()->json([
                 'success' => true,
@@ -2106,9 +2279,7 @@ class OrdersController extends Controller
         });
     }
 
-    /**
-     * به‌روزرسانی آیتم سفارش
-     */
+
     public function updateOrderItem(Request $request, Order $order, $itemId)
     {
         if (in_array($order->status, ['completed', 'canceled', 'shipped'])) {
@@ -2153,8 +2324,18 @@ class OrdersController extends Controller
                 'price' => $request->price
             ]);
 
+            // ================================================================
+            // باشگاه مشتریان: بازمحاسبه club_discount برای سفارش paid
+            // ================================================================
+            $this->recalculateClubDiscountIfPaid($order);
+
+            // محاسبه مجدد subtotal و total (با club_discount جدید)
             $this->recalculateOrderTotal($order);
-            $this->clubService->syncPointsForOrder($order);
+
+            // همگام‌سازی امتیاز
+            if ($order->payment_status === 'paid' && $order->status === 'paid') {
+                $this->clubService->syncPointsForOrder($order);
+            }
 
             return response()->json([
                 'success' => true,
@@ -2163,7 +2344,31 @@ class OrdersController extends Controller
             ]);
         });
     }
+    /**
+     * بازمحاسبه club_discount برای سفارش‌های paid.
+     * برای سفارش‌های pending/reserved کاری نمی‌کند (در checkout محاسبه می‌شود).
+     */
+    protected function recalculateClubDiscountIfPaid(Order $order): void
+    {
+        if ($order->payment_status !== 'paid' || $order->status !== 'paid') {
+            return;
+        }
 
+        $clubEnabled = (bool) Setting::where('key', 'club.enabled')->value('value');
+        if (!$clubEnabled) {
+            return;
+        }
+
+        // subtotal را مستقل حساب کن
+        $subtotal = (int) $order->items()->sum(DB::raw('price * quantity'));
+        $amountAfterCoupon = max(0, $subtotal - (int) $order->discount_amount);
+
+        $clubResult = app(ClubBenefitService::class)
+            ->applyDiscount($order->user, $amountAfterCoupon);
+
+        $order->club_discount = (int) $clubResult['discount'];
+        $order->save();
+    }
     /**
      * محاسبه مجدد کل سفارش
      */
@@ -2176,18 +2381,33 @@ class OrdersController extends Controller
         $address = $order->address;
         $quantity = $order->items->sum('quantity');
 
-        $shippingService = new ShippingService();
-        $shippingCost = $shippingService->calculateCost(
-            $order->shipping_id,
-            $address->province_id,
-            $address->city_id,
-            $subtotal,
-            $quantity
-        );
+        // ================================================================
+        // باشگاه مشتریان: تشخیص روش رایگان باشگاه
+        // ================================================================
+        $freeShippingMethod =  Shipping::freeShippingForClub();
+        $isClubFree = $freeShippingMethod
+            && (int) $order->shipping_id === (int) $freeShippingMethod->id;
 
-        $order->subtotal = $subtotal;
+        if ($isClubFree) {
+            // روش رایگان باشگاه → هزینه صفر
+            $shippingCost = 0;
+        } else {
+            $shippingService = new ShippingService();
+            $shippingCost = $shippingService->calculateCost(
+                $order->shipping_id,
+                $address->province_id,
+                $address->city_id,
+                $subtotal,
+                $quantity
+            );
+        }
+
+        $order->subtotal      = $subtotal;
         $order->shipping_cost = $shippingCost;
-        $order->total = $subtotal - $order->discount_amount + $shippingCost;
+        $order->total = $subtotal
+            - (int) $order->discount_amount
+            - (int) $order->club_discount
+            + $shippingCost;
         $order->save();
 
         return $order;
