@@ -164,7 +164,7 @@ class ShippingController extends Controller
         $quantity = $request->get('quantity', 0);
         $address = Address::with(['province', 'city'])->findOrFail($addressId);
 
-        $shippings = Shipping::with('conditions')->where('status', 1)->get();
+        $shippings = Shipping::with('conditions')->where('status', 1)->whereNot('for_club', 1)->get();
 
         $available = [];
 
@@ -315,6 +315,7 @@ class ShippingController extends Controller
             $shippings = Shipping::with('conditions')
                 ->when($reservationShippingId, fn($q) => $q->where('id', '!=', $reservationShippingId))
                 ->whereIn('status', [1, '1', true])
+                ->whereNot('for_club', 1)
                 ->get();
             $available = [];
 
@@ -408,7 +409,7 @@ class ShippingController extends Controller
         // =====================================================
         // 6) حالت عادی (بدون رزرو)
         // =====================================================
-        $shippings = Shipping::with('conditions')->where('status', 1)->get();
+        $shippings = Shipping::with('conditions')->where('status', 1)->whereNot('for_club', 1)->get();
         $available = [];
 
         foreach ($shippings as $shipping) {

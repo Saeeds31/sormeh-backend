@@ -18,6 +18,8 @@ class ShippingStoreRequest extends FormRequest
             'priority'  => ['nullable', 'integer'],
             'cost' => ['nullable', 'integer', 'min:0'],
             'status'       => ['nullable', 'boolean'],
+            'is_free'       => ['nullable', 'boolean'],
+            'for_club'       => ['nullable', 'boolean'],
             'conditions' => 'nullable|array|min:1',
             'conditions.*.condition' => 'nullable|string',
             'conditions.*.type'  => 'nullable|string',

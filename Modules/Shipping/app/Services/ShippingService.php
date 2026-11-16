@@ -129,7 +129,10 @@ class ShippingService
         if ($conditions->isEmpty()) {
             return true;
         }
-
+        // اگر روش قبلی انتخاب شده واسه باشگاه بوده باید اینم رایگان باشه
+        if ($shipping->is_free && $shipping->for_club) {
+            return true;
+        }
         foreach ($conditions as $condition) {
             $value = $condition->value;
             $type = $condition->type;

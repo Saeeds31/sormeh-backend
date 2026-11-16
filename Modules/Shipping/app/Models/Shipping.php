@@ -19,7 +19,10 @@ class Shipping extends Model
         'cost',
         'priority',
         'description',
+        'is_free',
+        'for_club',
         'status'
+        
     ];
     protected $table = "shippings";
     protected $casts = [
