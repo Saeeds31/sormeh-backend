@@ -26,4 +26,6 @@ Route::prefix('v1/front/club')->middleware('auth:sanctum')->group(function () {
     Route::get('transactions', [ClubController::class, 'transactions']);
     Route::get('usagesFront', [ClubController::class, 'usages']);
     Route::get('can-free-shipping', [ClubController::class, 'canUseFreeShipping']);
+    Route::get('free-shipping-status',    [ClubController::class, 'freeShippingStatus']);
+    Route::post('validate-free-shipping', [ClubController::class, 'validateFreeShipping']);
 });

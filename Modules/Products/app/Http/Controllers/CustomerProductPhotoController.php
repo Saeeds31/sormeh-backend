@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Modules\Products\Models\CustomerProductPhoto;
+use Modules\Products\Models\Product;
 use Modules\Products\Services\CustomerProductPhotoService;
 
 class CustomerProductPhotoController extends Controller
@@ -21,14 +22,18 @@ class CustomerProductPhotoController extends Controller
     {
         if (! auth()->check()) {
             return response()->json([
-                'status'=>false,
+                'status' => false,
                 'message' => 'برای ادامه باید وارد حساب کاربری شوید.',
             ], 422);
         }
-
+        $findProduct = Product::where('slug', $productId)->first();
+        if (!$findProduct) {
+            $findProduct = Product::where('id', $productId)->first();
+        }
+        $mainProductId = $findProduct->id;
         $result = $this->service->checkUploadStatus(
             userId: auth()->id(),
-            productId: $productId,
+            productId: $mainProductId,
         );
 
         // اطلاعات اضافی برای فرانت
@@ -61,6 +66,11 @@ class CustomerProductPhotoController extends Controller
     {
         $maxPhotos = $this->service->getMaxPhotosPerRequest();
 
+        $findProduct = Product::where('slug', $productId)->first();
+        if (!$findProduct) {
+            $findProduct = Product::where('id', $productId)->first();
+        }
+        $mainProductId = $findProduct->id;
         $request->validate([
             'images'        => ['required', 'array', "min:1", "max:{$maxPhotos}"],
             'images.*'      => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:1024'],
@@ -76,7 +86,7 @@ class CustomerProductPhotoController extends Controller
         try {
             $photo = $this->service->upload(
                 userId: auth()->id(),
-                productId: $productId,
+                productId: $mainProductId,
                 files: $request->file('images'),
                 caption: $request->input('caption'),
             );

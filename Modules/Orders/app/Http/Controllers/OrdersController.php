@@ -1342,12 +1342,24 @@ class OrdersController extends Controller
                 'free_shipping_method_id' => $method?->id,
             ];
         }
+        // ================================================================
+        // باشگاه مشتریان: تخمین امتیاز قابل دریافت از این سفارش
+        // ================================================================
+
 
         // --------------------------------------------------------
         // 7) مبلغ پرداختی
         // --------------------------------------------------------
         $payable = max(0, $subtotal - $productDiscount - $couponDiscount - $clubDiscount + $shippingCost);
+        $expectedCoins = 0;
+        if ($clubEnabled) {
+            $rateAmount = (int) Setting::where('key', 'club.point_rate_amount')->value('value');
+            $rateCoins  = (int) Setting::where('key', 'club.point_rate_coins')->value('value');
 
+            if ($rateAmount > 0 && $rateCoins > 0) {
+                $expectedCoins = intdiv((int) $payable, $rateAmount) * $rateCoins;
+            }
+        }
         return response()->json([
             'success' => true,
             'reservationOrder' => $reservationOrder,
@@ -1358,6 +1370,7 @@ class OrdersController extends Controller
                 'coupon_discount'       => (int) $couponDiscount,
                 'club_discount'         => (int) $clubDiscount,
                 'club_discount_percent' => $clubDiscountPercent,
+                'expected_coins'        => $expectedCoins,
                 'payable_amount'        => (int) $payable,
             ],
             'address' => $address,
